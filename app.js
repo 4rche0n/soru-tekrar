@@ -1201,7 +1201,34 @@
   // ---------------------------------------------------------------------
   // başlat
   // ---------------------------------------------------------------------
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Güncelleme: yeni sürüm arka planda eksiksiz indirilince bir bildirim çıkar. Kullanıcı dokunursa hemen,
+  // dokunmazsa uygulama bir sonraki açılışta yeni sürümle başlar. Çalışma ortasında kendiliğinden yenilenmez.
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    let applying = false; // sayfa SADECE bilerek uygulanan güncellemede yenilenir (ilk kurulumda değil)
+    const busy = () => S.phase !== 'idle' || !!IM || !$('#modal').classList.contains('hidden') || !$('#viewer').classList.contains('hidden');
+    const apply = (w) => { if (!w || applying) return; applying = true; w.postMessage('skipWaiting'); };
+    const offer = (w) => {
+      if (!w || !navigator.serviceWorker.controller) return; // ilk kurulumda bildirim gerekmez
+      $('#update-banner').classList.remove('hidden');
+      $('#update-go').onclick = () => { $('#update-go').disabled = true; apply(w); };
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (applying) location.reload(); });
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      if (reg.waiting) offer(reg.waiting);
+      reg.addEventListener('updatefound', () => {
+        const w = reg.installing;
+        w && w.addEventListener('statechange', () => { if (w.state === 'installed') offer(w); });
+      });
+      // iPad'de uygulamaya geri dönmek "yeniden açılış" sayılmaz: dönüşte yeni sürüm var mı bak;
+      // yarım iş yoksa (oturum, tarama, açık pencere) hazır güncellemeyi kendiliğinden uygula
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        if (reg.waiting && !busy()) apply(reg.waiting);
+        else reg.update().catch(() => {});
+      });
+      setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+    }).catch(() => {});
+  }
   (async () => {
     try {
       const p = await DB.getMeta('prefs', null);

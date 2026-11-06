@@ -3,12 +3,14 @@
 (function (global) {
   const RENDER_WIDTH = 1400;
 
-  // pdf.js ve worker'ı <script> ile yerelden yüklenir (vendor/). Worker global'i (pdfjsWorker)
-  // mevcut olduğunda pdf.js ana iş parçacığında çalışır; file:// ve iPad'de sorunsuz.
-  async function ensurePdfJs() {
-    if (!global.pdfjsLib) throw new Error('pdf.js yüklenemedi (app/vendor klasörü eksik).');
-    if (!global.pdfjsLib.GlobalWorkerOptions.workerSrc) global.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-    return global.pdfjsLib;
+  // pdf.js 4, index.html'deki modül betiğiyle yüklenir (vendor/pdf.min.mjs) ve "pdfjs-ready" olayını yayar.
+  // Modül betikleri ertelenerek çalıştığı için burada hazır olmasını bekleriz.
+  function ensurePdfJs() {
+    if (global.pdfjsLib) return Promise.resolve(global.pdfjsLib);
+    return new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error('PDF okuyucu yüklenemedi. Sayfayı yenileyip tekrar dene.')), 15000);
+      global.addEventListener('pdfjs-ready', () => { clearTimeout(t); res(global.pdfjsLib); }, { once: true });
+    });
   }
 
   async function loadPdf(arrayBuffer) {

@@ -14,8 +14,13 @@
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <title>Soru Tekrar</title>
 <link rel="stylesheet" href="style.css">
-<script src="vendor/pdf.min.js"></script>
-<script src="vendor/pdf.worker.min.js"></script>
+<script type="module">
+  // pdf.js 4 (legacy derleme: eski iPadOS sürümleriyle de uyumlu). PDF ayrıştırma gerçek bir Worker'da, ana ekrandan ayrı çalışır.
+  import * as pdfjsLib from './vendor/pdfjs4.min.js';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs4.worker.min.js', import.meta.url).href;
+  window.pdfjsLib = pdfjsLib;
+  window.dispatchEvent(new Event('pdfjs-ready'));
+</script>
 <script src="catalog.js"></script>
 <script src="zip.js"></script>
 <script src="db.js"></script>
@@ -254,6 +259,7 @@
   <div class="viewer-bar"><button class="btn soft" data-z="out">−</button><button class="btn soft" data-z="in">+</button><button class="btn soft" data-z="reset">Sığdır</button><button class="btn primary" data-z="close">Kapat</button></div>
   <div class="viewer-stage"><img id="viewer-img" alt=""></div>
 </div>
+<div id="update-banner" class="update-banner hidden"><span>Yeni sürüm hazır.</span><button class="btn primary sm" id="update-go">Güncelle</button></div>
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>

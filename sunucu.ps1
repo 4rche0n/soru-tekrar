@@ -13,7 +13,7 @@ while ($l.IsListening) {
     $p = [Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath)
     $base = $Root
     if ($Extra -and $p.StartsWith('/t/')) { $base = $Extra; $p = $p.Substring(2) }
-    if ($p -eq '/' -or $p -eq '') { $p = '/index.html' }
+    if ($p -eq '' -or $p.EndsWith('/')) { $p = $p + 'index.html' }   # klasör adresi → içindeki index.html
     $f = [IO.Path]::GetFullPath((Join-Path $base $p.TrimStart('/')))
     # kök klasörün dışına (ör. "app-yedek" gibi kardeş klasörlere) çıkılmasın: ayraçla birlikte, harf duyarsız karşılaştır
     $rootFull = [IO.Path]::GetFullPath($base).TrimEnd('\') + '\'
