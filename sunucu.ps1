@@ -15,7 +15,9 @@ while ($l.IsListening) {
     if ($Extra -and $p.StartsWith('/t/')) { $base = $Extra; $p = $p.Substring(2) }
     if ($p -eq '/' -or $p -eq '') { $p = '/index.html' }
     $f = [IO.Path]::GetFullPath((Join-Path $base $p.TrimStart('/')))
-    if (-not $f.StartsWith([IO.Path]::GetFullPath($base)) -or -not (Test-Path $f -PathType Leaf)) { $ctx.Response.StatusCode = 404 }
+    # kök klasörün dışına (ör. "app-yedek" gibi kardeş klasörlere) çıkılmasın: ayraçla birlikte, harf duyarsız karşılaştır
+    $rootFull = [IO.Path]::GetFullPath($base).TrimEnd('\') + '\'
+    if (-not $f.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path $f -PathType Leaf)) { $ctx.Response.StatusCode = 404 }
     else {
       $b = [IO.File]::ReadAllBytes($f)
       $ext = [IO.Path]::GetExtension($f).ToLower()

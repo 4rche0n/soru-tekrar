@@ -26,7 +26,9 @@
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
     canvas.addEventListener('lostpointercapture', up);
-    window.addEventListener('resize', () => { if (W) resize(); });
+    window.addEventListener('resize', () => resize());
+    // sekme değişip çalışma ekranı yeniden görünür olunca ölçüleri tazele
+    if ('ResizeObserver' in window) new ResizeObserver(() => { if (sheet.clientWidth && (sheet.clientWidth !== W || sheet.clientHeight !== H)) resize(); }).observe(sheet);
 
     document.getElementById('pad-undo').addEventListener('click', () => { strokes.pop(); redraw(); });
     document.getElementById('pad-clear').addEventListener('click', () => { strokes = []; redraw(); });
@@ -64,7 +66,18 @@
     // alt kenara yaklaşınca alanı büyüt
     if ((e.clientY - rect.top) > H - GROW_AT) grow();
   }
-  function up(e) { if (cur && (!e || e.pointerId === cur.id)) cur = null; }
+  // kalem kalkınca son orta noktadan son noktaya kalan parçayı da çiz (kısa işaretler eksik kalmasın)
+  function up(e) {
+    if (!cur || (e && e.pointerId !== cur.id)) return;
+    if (cur.pts.length > 1) tail(cur.pts, cur.s);
+    cur = null;
+  }
+  function tail(pts, s) {
+    const b = pts[pts.length - 2], c = pts[pts.length - 1];
+    ctx.strokeStyle = INK; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.lineWidth = SIZES[s] * (0.55 + c.p * 0.9);
+    ctx.beginPath(); ctx.moveTo(((b.x + c.x) / 2) * W, ((b.y + c.y) / 2) * W); ctx.lineTo(c.x * W, c.y * W); ctx.stroke();
+  }
 
   function dot(p) { ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(p.x * W, p.y * W, widthOf(p.p) / 2, 0, Math.PI * 2); ctx.fill(); }
   // i. noktaya kadar olan parçayı çiz: önceki orta noktadan bu orta noktaya, kontrol noktası önceki nokta
@@ -84,9 +97,12 @@
     for (const st of strokes) {
       if (st.pts.length === 1) { const keep = cur; cur = st; dot(st.pts[0]); cur = keep; continue; }
       for (let i = 1; i < st.pts.length; i++) segment(st.pts, i, st.s);
+      if (st !== cur) tail(st.pts, st.s);
     }
   }
   function resize() {
+    // görünmezken (başka sekme açıkken) ölçüler 0 olur: eski boyutu koru, görünür olunca yeniden ölçülür
+    if (!sheet.clientWidth || !sheet.clientHeight) return;
     W = sheet.clientWidth; H = sheet.clientHeight;
     const dpr = window.devicePixelRatio || 1;
     scale = Math.min(dpr, Math.sqrt(MAX_PIXELS / Math.max(1, W * H)));

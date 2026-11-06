@@ -44,7 +44,7 @@
   }
   async function savePrefs() { await DB.setMeta('prefs', PREFS); }
   async function markChanged(n = 1) { BACKUP.changes += n; await DB.setMeta('backup', BACKUP); }
-  async function saveQ(q, blob) { q.updated = Date.now(); await DB.saveQuestions([{ q, blob }]); if (blob) dropImg(q.id); await markChanged(1); }
+  async function saveQ(q, blob) { q.updated = Date.now(); delete q.rv; await DB.saveQuestions([{ q, blob }]); if (blob) dropImg(q.id); await markChanged(1); }
 
   // ---------------------------------------------------------------------
   // resimler: IndexedDB'den gerektiğinde yüklenir, son kullanılan 250 tanesi önbellekte
@@ -416,7 +416,15 @@
   // KİTAPLAR
   // =====================================================================
   let IM = null; // içe aktarma oturumu
+  // kitap PDF önbelleği: aynı anda tek kitap açık tutulur (iPad belleği için); çıkarılan kapatılır
   const bookPdfCache = new Map();
+  function cacheBookPdf(id, pdf) {
+    // içe aktarma incelemesinde hâlâ kullanılan kitap kapatılmaz
+    for (const [k, v] of bookPdfCache) if (k !== id && !(IM && IM.bookPdf === v)) { try { v.destroy(); } catch (e) {} bookPdfCache.delete(k); }
+    bookPdfCache.set(id, pdf);
+  }
+  // içe aktarma oturumunu kapat: işaretli PDF'in belleğini bırak (kitap PDF'i önbellekte kalır)
+  function endImport() { if (IM && IM.pdf) { try { IM.pdf.destroy(); } catch (e) {} } IM = null; releaseHq(); }
   const compact = (s) => lower(s).replace(/[^a-zçğıöşüâîû0-9]/g, '');
   const isSubseq = (s, t) => { let i = 0; for (const c of t) if (c === s[i]) i++; return i === s.length; };
   // Font bozulması harf düşürür/boşluk ekler: kısa ad uzun adın alt dizisiyse aynı başlıktır.
@@ -486,7 +494,7 @@
     const act = e.target.closest('button')?.dataset.act;
     if (act === 'del') {
       if (!confirm(`"${b.name}" kitabı silinsin mi? (Kaydedilmiş soruların silinmez.)`)) return;
-      await DB.books.del(b.id); await DB.bookfiles.del(b.id); bookPdfCache.delete(b.id); await loadBooks();
+      await DB.books.del(b.id); await DB.bookfiles.del(b.id); const bp = bookPdfCache.get(b.id); if (bp) { try { bp.destroy(); } catch (e) {} } bookPdfCache.delete(b.id); await loadBooks();
     }
     if (act === 'konu') openKonuEditor(b);
   });
@@ -502,10 +510,10 @@
     $('#ke-save').onclick = async () => {
       const map = new Map(names.map((k, i) => [k, $(`#modal-box input[data-i="${i}"]`).value.trim() || k]));
       b.pages.forEach(p => { if (map.has(p.konu)) p.konu = map.get(p.konu); });
-      b.updated = Date.now();
+      b.updated = Date.now(); delete b.rv;
       await DB.books.put(b);
       const qs = live().filter(q => q.bookId === b.id && map.has(q.konu) && map.get(q.konu) !== q.konu);
-      for (const q of qs) { q.konu = map.get(q.konu); q.updated = Date.now(); }
+      for (const q of qs) { q.konu = map.get(q.konu); q.updated = Date.now(); delete q.rv; }
       if (qs.length) { await DB.putMany(qs); await markChanged(qs.length); }
       closeModal(); await reload(); await loadBooks(); toast('Konu adları kaydedildi.');
     };
@@ -530,7 +538,7 @@
       const book = { id, ders, kaynak, name: extra ? `${kaynak} – ${extra}` : kaynak, fileName: f.name, size: f.size, numPages: pdf.numPages, pages, created: Date.now(), updated: Date.now(), hasFile: false };
       try { await DB.bookfiles.put({ id, blob }); book.hasFile = true; } catch (e) { console.warn('Kitap PDF saklanamadı', e); }
       await DB.books.put(book);
-      bookPdfCache.set(id, pdf);
+      cacheBookPdf(id, pdf);
       const testPages = pages.filter(p => p.key).length;
       st.textContent = `Eklendi: ${testPages} soru sayfası, ${new Set(pages.map(p => p.konu).filter(Boolean)).size} konu.${book.hasFile ? '' : ' (Cihazda yer yetmediği için PDF saklanmadı; bölüm eklerken kitabı seçmen istenecek.)'}`;
       resetFile('#ba-file'); $('#ba-name').value = ''; $('#bk-add-box').open = false;
@@ -553,7 +561,7 @@
     if (b.hasFile) { const r = await DB.bookfiles.get(b.id); if (r && r.blob) buf = await r.blob.arrayBuffer(); }
     if (!buf) { const f = $(fileInput)?.files[0]; if (!f) throw new Error('Bu kitabın PDF\'i cihazda yok. "Kitap PDF\'i" alanından seç.'); buf = await f.arrayBuffer(); }
     const pdf = await Detect.loadPdf(buf);
-    bookPdfCache.set(b.id, pdf);
+    cacheBookPdf(b.id, pdf);
     return pdf;
   }
 
@@ -578,8 +586,10 @@
     if (!book && (!ders || !kaynak)) return toast('Ders ve kaynak seç (ya da bir kitap seç).');
     const status = $('#im-status');
     $('#im-run').disabled = true; $('#im-review').classList.add('hidden');
+    endImport(); // önceki taramanın belleğini bırak
+    let pdf = null;
     try {
-      const pdf = await Detect.loadPdf(await f.arrayBuffer());
+      pdf = await Detect.loadPdf(await f.arrayBuffer());
       const bookPdf = book ? await getBookPdf(book) : null;
       const items = [], pages = {}; let unmatched = 0;
       for (let p = 1; p <= pdf.numPages; p++) {
@@ -623,11 +633,12 @@
       $('#im-review').classList.remove('hidden');
     } catch (e) {
       console.error(e); status.textContent = 'Hata: ' + e.message;
+      if (pdf && (!IM || IM.pdf !== pdf)) { try { pdf.destroy(); } catch (er) {} } // başarısız taramanın belleğini bırak
     } finally { $('#im-run').disabled = false; }
   });
 
   $('#im-showall').addEventListener('change', renderImport);
-  $('#im-cancel').addEventListener('click', () => { IM = null; $('#im-review').classList.add('hidden'); $('#im-status').textContent = ''; });
+  $('#im-cancel').addEventListener('click', () => { endImport(); $('#im-review').classList.add('hidden'); $('#im-status').textContent = ''; });
   function renderImport() {
     const all = $('#im-showall').checked;
     const list = IM.items.filter(i => all || i.detected || i.include);
@@ -707,7 +718,7 @@
         const old = Q.find(q => q.id === i.id);
         const base = { id: i.id, bookId: i.bookId, bookPage: i.bookPage, ders: i.ders, kaynak: i.kaynak, konu: i.konu, test: i.test, printed: i.printed, no: i.no, page: i.page, file: i.file,
           answer: i.answer || (old && old.answer) || null, wrong: i.wrong, star: i.star, hasImg: true,
-          crop: i.regen.fromBook ? { bookId: i.bookId, page: i.regen.page, box: i.regen.box } : null, updated: now, deleted: null };
+          crop: i.regen.fromBook ? { bookId: i.bookId, page: i.regen.page, box: i.regen.box } : null, updated: now, deleted: null, rv: null };
         const q = old ? { ...old, ...base, wrong: old.wrong || i.wrong, star: old.star || i.star } : normalizeQ({ ...base, ivl: 0, ease: 2.3, lapses: 0, reps: 0, due: now, history: [], created: now });
         return { q, blob: DB.dataURLToBlob(i.img) };
       });
@@ -716,7 +727,7 @@
       await markChanged(out.length);
       await reload();
       toast(`${out.length} soru kaydedildi.`);
-      IM = null; $('#im-review').classList.add('hidden'); $('#im-status').textContent = ''; resetFile('#im-file');
+      endImport(); $('#im-review').classList.add('hidden'); $('#im-status').textContent = ''; resetFile('#im-file');
       renderBooks(); show('study');
     } catch (e) { console.error(e); toast('Kaydedilemedi: ' + e.message, 6000); }
     finally { btn.disabled = false; }
@@ -962,7 +973,8 @@
   // =====================================================================
   async function renderBackup() {
     $('#bk-last').textContent = BACKUP.last ? `Son yedek: ${new Date(BACKUP.last).toLocaleString('tr-TR')} · o zamandan beri ${BACKUP.changes} değişiklik.` : 'Henüz yedek alınmadı.';
-    $('#bk-undo').classList.toggle('hidden', !(await DB.getMeta('restorePoint', null)));
+    const rp = await DB.getMeta('restorePoint', null);
+    $('#bk-undo').classList.toggle('hidden', !(rp && rp.added));
     const tr = Q.filter(q => q.deleted).sort((a, b) => b.deleted - a.deleted);
     $('#bk-trash').innerHTML = tr.length ? tr.map(q => `<div class="card" data-tid="${esc(q.id)}"><img data-img="${esc(q.id)}" alt=""><div class="body"><div><b>${esc(q.konu)}</b> · ${esc(qLabel(q))}</div>
       <div class="muted small">${new Date(q.deleted).toLocaleDateString('tr-TR')} tarihinde silindi</div>
@@ -1047,52 +1059,89 @@
       else data = JSON.parse(await f.text());
       if (!data || data.app && data.app !== 'soru-tekrar' || !Array.isArray(data.questions)) throw new Error('Bu bir Soru Tekrar yedeği değil');
       const incoming = data.questions.map(q => normalizeQ({ ...q }));
-      // geri alma noktası: değişecek kayıtların önceki hali ve mevcut kimlikler
+      if (incoming.some(q => typeof q.id !== 'string' || !q.id)) throw new Error('Yedekte kimliği eksik soru kaydı var');
+      if ((data.books || []).some(b => typeof b.id !== 'string' || !b.id)) throw new Error('Yedekte kimliği eksik kitap kaydı var');
       const existing = new Map(Q.map(q => [q.id, q]));
-      await DB.setMeta('restorePoint', { t: Date.now(), ids: [...existing.keys()], prev: incoming.filter(n => existing.has(n.id)).map(n => existing.get(n.id)), books: BOOKS.map(b => b.id) });
       const localImgs = new Set(await DB.images.keys());
-      let added = 0, merged = 0, imgs = 0; const batch = [];
+      const now = Date.now();
+
+      // 1) HAZIRLIK — veritabanına hiçbir şey yazılmadan önce her şey okunur ve doğrulanır
+      const writes = [], added = [], prevQ = [], prevImg = [], addedImg = []; let imgs = 0;
       for (let i = 0; i < incoming.length; i++) {
         const n = incoming[i], o = existing.get(n.id);
+        // resim: yerelde yoksa ya da gelen kayıt daha yeni düzenlenmişse (ör. başka cihazda kırpma düzeltildi) gelen resim alınır
+        const wantImg = !localImgs.has(n.id) || (o && (n.updated || 0) > (o.updated || 0));
         let blob = null;
-        if (!localImgs.has(n.id)) {
+        if (wantImg) {
           if (typeof n.img === 'string' && n.img.startsWith('data:')) blob = DB.dataURLToBlob(n.img);
-          else if (zip && data.imgMap && data.imgMap[n.id]) { const u8 = await zip.bytes(data.imgMap[n.id]); if (u8) blob = new Blob([u8], { type: 'image/jpeg' }); }
-          if (blob) imgs++;
+          else if (zip && data.imgMap && data.imgMap[n.id]) {
+            await zip.bytes(data.imgMap[n.id]);                 // CRC doğrulaması (bozuksa hata fırlatır)
+            blob = await zip.blob(data.imgMap[n.id]);           // yazarken dosyadan okunur, belleğe kopyalanmaz
+          }
+          if (blob) {
+            imgs++;
+            if (o && localImgs.has(n.id)) { const r = await DB.images.get(n.id); if (r) prevImg.push(r); }
+            else if (o) addedImg.push(n.id); // var olan ama resmi olmayan soruya resim eklendi: geri alınca silinecek
+          }
         }
         delete n.img; if (blob || localImgs.has(n.id)) n.hasImg = true;
-        batch.push({ q: mergeQ(o, n), blob }); o ? merged++ : added++;
-        if (batch.length >= 50) { await DB.saveQuestions(batch.splice(0)); st.textContent = `Geri yükleniyor… ${i + 1}/${incoming.length}`; }
+        if (o) prevQ.push(o); else added.push(n.id);
+        writes.push({ q: mergeQ(o, n), blob });
+        if (i % 50 === 0) { st.textContent = `Yedek doğrulanıyor… ${i + 1}/${incoming.length}`; await tick(); }
       }
-      if (batch.length) await DB.saveQuestions(batch);
-      let nb = 0;
+      const bookWrites = [], prevBooks = [], addedBooks = [];
       for (const b of data.books || []) {
         const old = BOOKS.find(x => x.id === b.id);
-        if (!old || (b.updated || 0) > (old.updated || 0)) { await DB.books.put(old ? { ...b, hasFile: old.hasFile } : { ...b, hasFile: false }); nb++; }
+        if (!old || (b.updated || 0) > (old.updated || 0)) { bookWrites.push(old ? { ...b, hasFile: old.hasFile } : { ...b, hasFile: false }); old ? prevBooks.push(old) : addedBooks.push(b.id); }
       }
+      const prevPrefs = JSON.parse(JSON.stringify(PREFS)), newPrefs = JSON.parse(JSON.stringify(PREFS));
       if (data.prefs) {
-        for (const k of ['ders', 'kaynak', 'konu']) { PREFS.fav[k] = uniq([...PREFS.fav[k], ...(data.prefs.fav?.[k] || [])]); PREFS.recent[k] = uniq([...PREFS.recent[k], ...(data.prefs.recent?.[k] || [])]).slice(0, 12); }
-        PREFS.custom.ders = uniq([...PREFS.custom.ders, ...(data.prefs.custom?.ders || [])]);
-        for (const k of ['konu', 'kaynak']) for (const [d, arr] of Object.entries(data.prefs.custom?.[k] || {})) PREFS.custom[k][d] = uniq([...(PREFS.custom[k][d] || []), ...arr]);
-        await savePrefs();
+        for (const k of ['ders', 'kaynak', 'konu']) { newPrefs.fav[k] = uniq([...newPrefs.fav[k], ...(data.prefs.fav?.[k] || [])]); newPrefs.recent[k] = uniq([...newPrefs.recent[k], ...(data.prefs.recent?.[k] || [])]).slice(0, 12); }
+        newPrefs.custom.ders = uniq([...newPrefs.custom.ders, ...(data.prefs.custom?.ders || [])]);
+        for (const k of ['konu', 'kaynak']) for (const [d, arr] of Object.entries(data.prefs.custom?.[k] || {})) newPrefs.custom[k][d] = uniq([...(newPrefs.custom[k][d] || []), ...arr]);
       }
+      // geri alma noktası: bu geri yüklemenin eklediği ve değiştirdiği her şeyin önceki hali
+      // written: bu geri yüklemenin yazdığı her kaydın damgası; geri alırken "sonradan değişmiş mi" kesin anlaşılır
+      writes.forEach(w => { w.q.rv = now; });
+      bookWrites.forEach(b => { b.rv = now; });
+      const restorePoint = { t: now, added, prevQ, prevImg, addedImg, addedBooks, prevBooks, prevPrefs, newPrefs: JSON.stringify(newPrefs) };
+
+      // 2) YAZMA — tek işlem: ya hepsi yazılır ya hiçbiri
+      st.textContent = 'Geri yükleniyor…';
+      await DB.applyRestore({ questions: writes, books: bookWrites, meta: [{ key: 'prefs', value: newPrefs }, { key: 'restorePoint', value: restorePoint }] });
+      PREFS = newPrefs;
       imgCache.forEach((u) => URL.revokeObjectURL(u)); imgCache.clear();
       await reload(); await loadBooks();
-      st.textContent = `Geri yüklendi: ${added} yeni soru, ${merged} soru birleştirildi, ${imgs} resim${nb ? `, ${nb} kitap dizini` : ''}.` + ((data.books || []).length ? ' Kitaplardan yeni bölüm eklemek için kitap PDF\'ini bu cihazda bir kez seçmen gerekebilir.' : '');
+      st.textContent = `Geri yüklendi: ${added.length} yeni soru, ${prevQ.length} soru birleştirildi, ${imgs} resim${bookWrites.length ? `, ${bookWrites.length} kitap dizini` : ''}.` + ((data.books || []).length ? ' Kitaplardan yeni bölüm eklemek için kitap PDF\'ini bu cihazda bir kez seçmen gerekebilir.' : '');
       renderBackup();
-    } catch (err) { console.error(err); st.textContent = 'Geri yüklenemedi: ' + err.message + ' (Mevcut verilerin değişmedi.)'; }
+    } catch (err) { console.error(err); st.textContent = 'Geri yüklenemedi: ' + err.message + ' (Hiçbir şey değiştirilmedi.)'; }
   });
   $('#bk-undo').addEventListener('click', async () => {
-    const rp = await DB.getMeta('restorePoint', null); if (!rp) return;
-    if (!confirm(`${new Date(rp.t).toLocaleString('tr-TR')} tarihli geri yükleme geri alınsın mı?`)) return;
-    const ids = new Set(rp.ids);
-    for (const q of Q) if (!ids.has(q.id)) await DB.deleteQuestionHard(q.id);
-    if (rp.prev.length) await DB.putMany(rp.prev);
-    const bids = new Set(rp.books);
-    for (const b of BOOKS) if (!bids.has(b.id)) await DB.books.del(b.id);
-    await DB.meta.del('restorePoint');
+    const rp = await DB.getMeta('restorePoint', null); if (!rp || !rp.added) return;
+    if (!confirm(`${new Date(rp.t).toLocaleString('tr-TR')} tarihli geri yükleme geri alınsın mı? Geri yüklemeden sonra üzerinde çalıştığın sorulara dokunulmaz.`)) return;
+    // geri yüklemeden SONRA değiştirilen (çözülen, düzenlenen) kayıtlar korunur
+    const cur = new Map(Q.map(q => [q.id, q]));
+    // geri yüklemenin yazdığı kayıt hâlâ aynıysa (rv damgası duruyor ve sonra kaydedilmemiş) dokunulmamış sayılır
+    const untouched = (id) => { const q = cur.get(id); return q && q.rv === rp.t; };
+    const delQ = rp.added.filter(untouched);
+    const putQ = rp.prevQ.filter(p => untouched(p.id));
+    const putImg = rp.prevImg.filter(r => untouched(r.id));
+    const delImg = (rp.addedImg || []).filter(untouched);
+    const kept = rp.added.length - delQ.length + rp.prevQ.length - putQ.length;
+    // kitaplar: sadece geri yüklemenin yazdığı ve sonradan değişmemiş olanlar; kalan sorulardan biri hâlâ kullanıyorsa silinmez
+    const bmap = new Map(BOOKS.map(b => [b.id, b])), delSet = new Set(delQ);
+    const bookUntouched = (id) => bmap.get(id) && bmap.get(id).rv === rp.t;
+    const inUse = (id) => Q.some(q => q.bookId === id && !delSet.has(q.id));
+    const delBooks = rp.addedBooks.filter(id => bookUntouched(id) && !inUse(id));
+    const putBooks = rp.prevBooks.filter(b => bookUntouched(b.id)).map(b => ({ ...b, hasFile: bmap.get(b.id).hasFile }));
+    // ayarlar: geri yüklemeden sonra değiştirilmediyse eski haline döner (değiştiyse sonraki hali korunur)
+    const prefsSame = JSON.stringify(PREFS) === rp.newPrefs;
+    const undoMeta = prefsSame ? [{ key: 'prefs', value: rp.prevPrefs }] : [];
+    await DB.applyUndo({ delQ, putQ, putImg, delBooks, putBooks, meta: undoMeta, delMeta: ['restorePoint'], delImg });
+    if (prefsSame) PREFS = rp.prevPrefs;
     imgCache.forEach((u) => URL.revokeObjectURL(u)); imgCache.clear();
-    await reload(); await loadBooks(); renderBackup(); toast('Geri yükleme geri alındı.');
+    await reload(); await loadBooks(); renderBackup();
+    toast('Geri yükleme geri alındı.' + (kept ? ` Sonradan üzerinde çalıştığın ${kept} soru korundu.` : ''), 5000);
   });
   $('#bk-wipe').addEventListener('click', async () => {
     const t = prompt('Tüm sorular, geçmiş ve kitaplar silinecek. Onaylamak için SİL yaz.');

@@ -13,7 +13,8 @@
 
   async function loadPdf(arrayBuffer) {
     const lib = await ensurePdfJs();
-    return lib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    // isEvalSupported: false → CVE-2024-4367 (zararlı PDF ile kod çalıştırma) için üreticinin önerdiği önlem
+    return lib.getDocument({ data: new Uint8Array(arrayBuffer), isEvalSupported: false }).promise;
   }
 
   // width: tespit için 1400px yeterli; soru görselleri için daha yüksek çözünürlük kullanılır

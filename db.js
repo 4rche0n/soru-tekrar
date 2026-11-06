@@ -47,7 +47,9 @@
     return new Promise((res, rej) => {
       const t = db.transaction(stores, mode);
       let out;
-      Promise.resolve(fn(t)).then(v => { out = v; }, err => { try { t.abort(); } catch (e) {} rej(err); });
+      const fail = (err) => { try { t.abort(); } catch (e) {} rej(err); };
+      // fn anında (eşzamanlı) hata fırlatırsa da işlem iptal edilir: önceki put'lar yazılmaz
+      try { Promise.resolve(fn(t)).then(v => { out = v; }, fail); } catch (err) { fail(err); }
       t.oncomplete = () => res(out);
       t.onerror = () => rej(t.error);
       t.onabort = () => rej(t.error || new Error('Kayıt iptal edildi'));
@@ -73,6 +75,19 @@
     saveQuestions: (items) => tx(['questions', 'images'], 'readwrite', t => {
       const qs = t.objectStore('questions'), im = t.objectStore('images');
       for (const { q, blob } of items) { qs.put(q); if (blob) im.put({ id: q.id, blob }); }
+    }),
+    // geri yükleme: sorular, resimler, kitaplar ve ayarlar TEK işlemde yazılır.
+    // Herhangi bir hata (ör. yer kalmadı) olursa hiçbiri yazılmaz.
+    applyRestore: ({ questions = [], books = [], meta = [] }) => tx(['questions', 'images', 'books', 'meta'], 'readwrite', t => {
+      const qs = t.objectStore('questions'), im = t.objectStore('images'), bs = t.objectStore('books'), ms = t.objectStore('meta');
+      for (const { q, blob } of questions) { qs.put(q); if (blob) im.put({ id: q.id, blob }); }
+      books.forEach(b => bs.put(b)); meta.forEach(m => ms.put(m));
+    }),
+    // geri yüklemeyi geri alma: silinecekler, geri konacak kayıtlar ve resimler tek işlemde
+    applyUndo: ({ delQ = [], putQ = [], putImg = [], delImg = [], delBooks = [], putBooks = [], meta = [], delMeta = [] }) => tx(['questions', 'images', 'books', 'meta'], 'readwrite', t => {
+      const qs = t.objectStore('questions'), im = t.objectStore('images'), bs = t.objectStore('books'), ms = t.objectStore('meta');
+      delQ.forEach(id => { qs.delete(id); im.delete(id); }); putQ.forEach(q => qs.put(q)); putImg.forEach(r => im.put(r)); delImg.forEach(id => im.delete(id));
+      delBooks.forEach(id => bs.delete(id)); putBooks.forEach(b => bs.put(b)); meta.forEach(m => ms.put(m)); delMeta.forEach(k => ms.delete(k));
     }),
     deleteQuestionHard: (id) => tx(['questions', 'images'], 'readwrite', t => { t.objectStore('questions').delete(id); t.objectStore('images').delete(id); }),
     clearAll: () => tx(['questions', 'images', 'books', 'bookfiles', 'meta'], 'readwrite', t => { for (const n of ['questions', 'images', 'books', 'bookfiles', 'meta']) t.objectStore(n).clear(); }),
