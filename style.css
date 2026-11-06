@@ -366,10 +366,11 @@ button.chip.konu { max-width: 100%; overflow: hidden; text-overflow: ellipsis; w
 .sheet img { display: block; width: 100%; height: auto; padding: 14px 14px 0; pointer-events: none; -webkit-user-drag: none; }
 .pad-space { height: 55vh; border-top: 1px dashed #e3e6ee;
   background-image: radial-gradient(circle, #dfe3ec 1px, transparent 1.2px); background-size: 24px 24px; background-position: 12px 12px; }
-#pad { position: absolute; left: 0; top: 0; pointer-events: auto; }
+.pad-tiles { position: absolute; inset: 0; pointer-events: none; }
+.pad-tile, #pad-live { position: absolute; left: 0; top: 0; pointer-events: none; }
+#pad-hit { position: absolute; inset: 0; }
 .dock { position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 8px); z-index: 6; margin-top: 12px; padding: 12px; border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: saturate(180%) blur(14px); -webkit-backdrop-filter: saturate(180%) blur(14px);
-  border: 1px solid var(--line); box-shadow: var(--shadow-lg); }
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-lg); }
 .dock .choices { margin: 0; }
 .dock .feedback { margin: 10px 0 0; } .dock .grade { margin: 10px 0 0; }
 .dock .run-actions:has(#run-next:not(.hidden)), .dock .run-actions:has(#run-skip:not(.hidden)) { margin-top: 10px; }
