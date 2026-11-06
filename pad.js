@@ -42,6 +42,8 @@
     hit.addEventListener('lostpointercapture', up);
     document.addEventListener('visibilitychange', () => { if (document.hidden) up(); });
     window.addEventListener('blur', () => up());
+    // kalem basılıyken sayfa kaydırılırsa koordinatlar eskir: çizgiyi orada bitir
+    window.addEventListener('scroll', () => { if (cur) up(); }, { passive: true });
     document.getElementById('pad-size').addEventListener('click', e => {
       const b = e.target.closest('[data-s]'); if (!b) return;
       size = +b.dataset.s;
@@ -214,5 +216,5 @@
     if (img.complete && img.naturalWidth) requestAnimationFrame(go); else img.addEventListener('load', go, { once: true });
   }
 
-  global.Pad = { init, reset, resize, _debug: () => ({ W, H, dpr, tiles: tiles.length, strokes: strokes.length }) };
+  global.Pad = { init, reset, resize, end: () => up(), _debug: () => ({ W, H, dpr, tiles: tiles.length, strokes: strokes.length }) };
 })(window);

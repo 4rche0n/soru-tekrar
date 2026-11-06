@@ -34,12 +34,18 @@
   const live = () => Q.filter(q => !q.deleted);
 
   async function reload() { Q = await DB.all(); Q.forEach(normalizeQ); refreshFilters(); updateHome(); }
+  // Kayıt biçimini her zaman güvenli hale getirir (eski sürümler, bozuk ya da elle düzenlenmiş yedekler):
+  // yanlış tipteki alanlar uygulamayı çökertmesin
+  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+  const str = (v, d = '') => (typeof v === 'string' ? v : v == null ? d : String(v));
   function normalizeQ(q) {
+    q.history = Array.isArray(q.history) ? q.history.filter(h => h && typeof h === 'object' && isFinite(h.t)) : [];
     if (q.ivl == null) { const I = [0, 1, 3, 7, 14, 30, 60]; q.ivl = I[q.box || 0] || 0; }
-    if (q.ease == null) q.ease = 2.3;
-    if (q.lapses == null) q.lapses = (q.history || []).filter(h => !h.ok).length;
-    if (q.due == null) q.due = Date.now();
-    q.history = q.history || [];
+    q.ivl = num(q.ivl, 0); q.ease = num(q.ease, 2.3); q.due = num(q.due, Date.now());
+    q.lapses = num(q.lapses, q.history.filter(h => !h.ok).length);
+    q.ders = str(q.ders, 'Diğer'); q.kaynak = str(q.kaynak); q.konu = str(q.konu, 'Diğer');
+    if (q.no != null && typeof q.no !== 'number') q.no = num(+q.no, null);
+    if (q.answer != null && !LETTERS.includes(q.answer)) q.answer = null;
     return q;
   }
   async function savePrefs() { await DB.setMeta('prefs', PREFS); }
@@ -117,6 +123,7 @@
   // sekmeler
   // ---------------------------------------------------------------------
   function show(view) {
+    if (view !== 'study' && window.Pad) Pad.end(); // sekme değişirken yarım kalan kalem çizgisini bitir
     $$('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.view === view));
     $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + view));
     if (view === 'list') renderList(true);
@@ -278,7 +285,7 @@
   $('#st-mode').addEventListener('change', updateStudyCount);
   $('#st-limit').addEventListener('change', updateStudyCount);
 
-  const S = { queue: [], i: 0, t0: 0, pausedAt: 0, timer: null, phase: 'idle', seen: new Set(), results: [], requeued: new Set(), cur: null, choice: null, ok: false, ms: 0, reason: null };
+  const S = { queue: [], i: 0, t0: 0, pausedAt: 0, timer: null, phase: 'idle', token: 0, seen: new Set(), results: [], requeued: new Set(), cur: null, choice: null, ok: false, ms: 0, reason: null };
   const elapsed = () => (S.pausedAt || Date.now()) - S.t0;
   // uygulamadan çıkınca süre durur, dönünce devam eder
   document.addEventListener('visibilitychange', () => {
@@ -313,11 +320,17 @@
   async function showQuestion() {
     const q = Q.find(x => x.id === S.queue[S.i]);
     if (!q || q.deleted) { S.i++; return next(); }
-    S.cur = q; S.phase = 'answer'; S.choice = null; S.reason = null; S.pausedAt = 0;
+    // yüklenirken önceki sorunun şıkları kullanılamasın; art arda geçişlerde sadece son istek ekrana gelsin
+    const token = ++S.token;
+    S.cur = q; S.phase = 'loading'; S.choice = null; S.reason = null; S.pausedAt = 0;
+    $('#run-choices').innerHTML = ''; $('#run-skip').disabled = true;
     $('#run-meta').textContent = `${q.ders} · ${q.konu} · ${q.kaynak} · ${qLabel(q)}`;
     $('#run-progress').textContent = `${S.i + 1} / ${S.queue.length}`;
     $('#run-bar').style.width = `${Math.round(S.i / S.queue.length * 100)}%`;
-    const img = $('#run-img'); img.removeAttribute('src'); img.src = await imgURL(q.id);
+    const img = $('#run-img'); img.removeAttribute('src');
+    const src = await imgURL(q.id);
+    if (token !== S.token) return;
+    img.src = src; S.phase = 'answer'; $('#run-skip').disabled = false;
     Pad.reset(); // her soruda temiz sayfa
     $('#run-feedback').className = 'feedback hidden'; $('#run-grade').className = 'grade hidden';
     $('#run-next').classList.add('hidden'); $('#run-skip').classList.remove('hidden');
@@ -333,7 +346,7 @@
   }
 
   async function answer(q, choice) {
-    if (S.phase !== 'answer') return;
+    if (S.phase !== 'answer' || q !== S.cur) return;
     const ms = elapsed();
     if (!q.answer) {
       // cevap anahtarı yoksa: doğru şıkkı bir kez sor, kaydet, sonra değerlendir
@@ -375,13 +388,21 @@
     if (S.phase !== 'grade') return;
     S.phase = 'saving';
     const q = S.cur, now = Date.now(), first = !S.seen.has(q.id);
-    S.seen.add(q.id);
+    // kayıt başarısız olursa bellekteki soru eski haline döner ve kullanıcı yeniden deneyebilir
+    const before = { history: q.history.slice(), ivl: q.ivl, ease: q.ease, due: q.due, reps: q.reps, last: q.last, lapses: q.lapses, updated: q.updated, rv: q.rv };
     const entry = { t: now, c: S.choice, ok: S.ok, ms: S.ms, g };
     if (S.reason) entry.r = S.reason;
     if (!first) entry.rq = true; // aynı oturumdaki tekrar denemesi: istatistikte ayrı tutulur
     q.history.push(entry);
     if (first) applyGrade(q, g, now);
-    await saveQ(q);
+    try { await saveQ(q); }
+    catch (e) {
+      console.error(e); Object.assign(q, before); if (before.rv === undefined) delete q.rv;
+      S.phase = 'grade';
+      toast('Kaydedilemedi (' + (e.message || 'depolama hatası') + '). Tekrar dene; sorun sürerse Yedek sekmesinden yer durumuna bak.', 6000);
+      return;
+    }
+    S.seen.add(q.id);
     if (first) S.results.push({ id: q.id, ok: S.ok, ms: S.ms, g, r: S.reason });
     // yanlışsa aynı oturumda birkaç soru sonra yeniden sor
     if (!S.ok && !S.requeued.has(q.id)) { S.requeued.add(q.id); S.queue.splice(Math.min(S.i + 4, S.queue.length), 0, q.id); }
@@ -611,7 +632,8 @@
           const img = picked ? await hqCrop(bp ? bookPdf : pdf, srcPage, box) : Detect.crop(lo, box, 700);
           items.push({
             hq: picked, regen: { fromBook: !!bp, page: srcPage, box }, pageNo: p,
-            id: bp ? `${book.id}|${bp.p}|${q.n}` : [ders, kaynak, konu, test != null ? 'T' + test : f.name + '#p' + p, q.n].join('|'),
+            // kitapsız: basılı sayfa no da kimliğe girer (aynı yayının farklı kitaplarındaki aynı test/soru no çakışmasın)
+            id: bp ? `${book.id}|${bp.p}|${q.n}` : [ders, kaynak, konu, test != null ? 'T' + test : f.name + '#p' + p, printed != null ? 'S' + printed : '', q.n].join('|'),
             bookId: bp ? book.id : null, bookPage: bp ? bp.p : null, clean: !!bp,
             ders, kaynak, konu, test, printed, no: q.n, page: p, file: f.name,
             img, answer: q.answer || bkey[q.n] || null, wrong: q.wrong, star: q.star, suggest: q.suggest,
@@ -699,7 +721,7 @@
     const bkey = pg.fromBook ? keyMap((IM.book.pages.find(p => p.p === pg.srcPage) || {}).key) : {};
     IM.items.push({
       hq: true, regen: { fromBook: pg.fromBook, page: pg.srcPage, box }, pageNo,
-      id: bookId ? `${bookId}|${pg.srcPage}|${no}` : [IM.ders, IM.kaynak, pg.konu, pg.test != null ? 'T' + pg.test : IM.fileName + '#p' + pageNo, no].join('|'),
+      id: bookId ? `${bookId}|${pg.srcPage}|${no}` : [IM.ders, IM.kaynak, pg.konu, pg.test != null ? 'T' + pg.test : IM.fileName + '#p' + pageNo, pg.printed != null ? 'S' + pg.printed : '', no].join('|'),
       bookId, bookPage: bookId ? pg.srcPage : null, clean: pg.fromBook,
       ders: IM.ders, kaynak: IM.kaynak, konu: pg.konu, test: pg.test, printed: pg.printed, no, page: pageNo, file: IM.fileName,
       img, answer: bkey[no] || null, wrong: true, star: false, include: true, detected: true
@@ -879,7 +901,7 @@
     $('#md-del').onclick = async () => { q.deleted = Date.now(); await saveQ(q); closeModal(); await reload(); renderList(true); toast('Çöp kutusuna taşındı (30 gün içinde geri alabilirsin).'); };
     $('#md-reset').onclick = async () => {
       if (!confirm('Bu sorunun çözüm geçmişi ve tekrar durumu sıfırlansın mı?')) return;
-      Object.assign(q, { history: [], ivl: 0, ease: 2.3, lapses: 0, reps: 0, due: Date.now(), last: null });
+      Object.assign(q, { history: [], ivl: 0, ease: 2.3, lapses: 0, reps: 0, due: Date.now(), last: null, resetAt: Date.now() });
       await saveQ(q); closeModal(); await reload(); renderList(true);
     };
     const cb = $('#md-crop');
@@ -1019,18 +1041,25 @@
       const { blob, qs, n } = await buildBackup((i, t) => { st.textContent = `Yedek hazırlanıyor… ${i}/${t}`; });
       const fname = `soru-tekrar-yedek-${new Date().toISOString().slice(0, 10)}.zip`;
       const file = new File([blob], fname, { type: 'application/zip' });
-      let shared = false;
-      if (navigator.canShare && navigator.canShare({ files: [file] }) && /iPad|iPhone|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document) {
-        try { await navigator.share({ files: [file], title: 'Soru Tekrar yedeği' }); shared = true; }
-        catch (e) { if (e.name === 'AbortError') { st.textContent = 'Yedek paylaşımı iptal edildi.'; return; } }
+      const info = `${qs.length} soru, ${n} resim (${(blob.size / 1048576).toFixed(1)} MB)`;
+      const done = async () => {
+        BACKUP = { last: Date.now(), changes: 0 }; await DB.setMeta('backup', BACKUP);
+        st.textContent = `Yedek alındı: ${info}.`; updateHome(); renderBackup();
+      };
+      const touchApple = /iPad|iPhone|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document;
+      if (touchApple && navigator.canShare && navigator.canShare({ files: [file] })) {
+        // iPad: paylaşım penceresi kullanıcının dokunuşuyla açılmalı; hazırlık uzun sürdüyse ilk dokunuşun süresi dolmuş olur.
+        // Bu yüzden hazır dosya için ayrı bir "Kaydet" düğmesi gösterilir.
+        st.innerHTML = `Yedek hazır: ${esc(info)}. <button class="btn primary sm" id="bk-share">Dosyalar'a kaydet / paylaş</button>`;
+        $('#bk-share').onclick = async () => {
+          try { await navigator.share({ files: [file], title: 'Soru Tekrar yedeği' }); await done(); }
+          catch (e) { st.textContent = e.name === 'AbortError' ? 'Yedek kaydedilmedi (iptal edildi). Yeniden "Yedek al"a dokunabilirsin.' : 'Paylaşım açılamadı: ' + e.message; }
+        };
+        return;
       }
-      if (!shared) {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = fname;
-        document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-      }
-      BACKUP = { last: Date.now(), changes: 0 }; await DB.setMeta('backup', BACKUP);
-      st.textContent = `Yedek alındı: ${qs.length} soru, ${n} resim (${(blob.size / 1048576).toFixed(1)} MB).`;
-      updateHome(); renderBackup();
+      const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      await done();
     } catch (e) { console.error(e); st.textContent = 'Yedek alınamadı: ' + e.message; }
   }
   $('#bk-export').addEventListener('click', exportBackup);
@@ -1038,15 +1067,20 @@
   // Birleştirme: çözüm geçmişleri birleşir; bilgi alanlarında en son düzenlenen, tekrar durumunda en son çözülen kazanır.
   const META_KEYS = ['ders', 'kaynak', 'konu', 'answer', 'wrong', 'star', 'deleted', 'crop', 'test', 'printed', 'no', 'bookId', 'bookPage', 'page', 'file', 'created', 'updated'];
   const SRS_KEYS = ['ivl', 'ease', 'due', 'lapses', 'reps', 'last'];
-  const lastT = (q) => q.last || Math.max(0, ...(q.history || []).map(h => h.t));
+  // "Geçmişi sıfırla" zamanı (resetAt) birleştirmede korunur: sıfırlamadan önceki geçmiş eski bir yedekten geri gelmez
+  const lastT = (q) => Math.max(q.last || 0, q.resetAt || 0, ...(q.history || []).map(h => h.t));
   function mergeQ(o, n) {
     if (!o) return n;
-    const hs = new Map([...(o.history || []), ...(n.history || [])].map(h => [h.t + '|' + h.c, h]));
+    const resetAt = Math.max(o.resetAt || 0, n.resetAt || 0);
+    const hs = new Map([...(o.history || []), ...(n.history || [])].filter(h => h.t > resetAt).map(h => [h.t + '|' + h.c, h]));
     const out = { ...o, history: [...hs.values()].sort((a, b) => a.t - b.t) };
+    if (resetAt) out.resetAt = resetAt;
     const m = (n.updated || 0) > (o.updated || 0) ? n : o, s = lastT(n) > lastT(o) ? n : o;
     META_KEYS.forEach(k => { if (k in m) out[k] = m[k]; });
     SRS_KEYS.forEach(k => { if (k in s) out[k] = s[k]; });
-    out.lapses = Math.max(o.lapses || 0, n.lapses || 0, out.history.filter(h => !h.ok && !h.rq).length);
+    // sıfırlama varsa eski kayıtların hata sayısı geri gelmesin: sadece sıfırlamadan sonra sayılanlar
+    const after = (q) => ((q.resetAt || 0) >= resetAt ? (q.lapses || 0) : 0);
+    out.lapses = Math.max(resetAt ? Math.max(after(o), after(n)) : Math.max(o.lapses || 0, n.lapses || 0), out.history.filter(h => !h.ok && !h.rq).length);
     return out;
   }
   $('#bk-import').addEventListener('change', async (e) => {
@@ -1060,7 +1094,9 @@
       if (!data || data.app && data.app !== 'soru-tekrar' || !Array.isArray(data.questions)) throw new Error('Bu bir Soru Tekrar yedeği değil');
       const incoming = data.questions.map(q => normalizeQ({ ...q }));
       if (incoming.some(q => typeof q.id !== 'string' || !q.id)) throw new Error('Yedekte kimliği eksik soru kaydı var');
-      if ((data.books || []).some(b => typeof b.id !== 'string' || !b.id)) throw new Error('Yedekte kimliği eksik kitap kaydı var');
+      if ((data.books || []).some(b => !b || typeof b.id !== 'string' || !b.id)) throw new Error('Yedekte kimliği eksik kitap kaydı var');
+      if ((data.books || []).some(b => !Array.isArray(b.pages) || b.pages.some(p => !p || typeof p !== 'object'))) throw new Error('Yedekteki kitap dizini bozuk');
+      if (data.imgMap && (typeof data.imgMap !== 'object' || Object.values(data.imgMap).some(v => typeof v !== 'string'))) throw new Error('Yedekteki resim listesi bozuk');
       const existing = new Map(Q.map(q => [q.id, q]));
       const localImgs = new Set(await DB.images.keys());
       const now = Date.now();
