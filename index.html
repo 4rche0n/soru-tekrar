@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Soru Tekrar">
+<meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1117" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<title>Soru Tekrar</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf.worker.min.js"></script>
+<script src="db.js"></script>
+<script src="detect.js"></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L8.5 4.64A1 1 0 0 0 7 5.5Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><rect x="4" y="12" width="4" height="8" rx="1.5"/><rect x="10" y="7" width="4" height="13" rx="1.5"/><rect x="16" y="3" width="4" height="17" rx="1.5"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.5a4.25 4.25 0 0 1-.5 8.5H7Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M17 3l3 3-3 3M20 6H9a5 5 0 0 0-5 5M7 21l-3-3 3-3M4 18h11a5 5 0 0 0 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 2.5s5.5 4.6 5.5 10a5.5 5.5 0 0 1-11 0c0-2.4 1.2-4.2 2.4-5.4.3 1.6 1.2 2.7 2.3 3.2C11 7.7 12 2.5 12 2.5Z"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.2l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.6l-5.2 2.8 1-5.9-4.3-4.1 5.9-.8L12 3.2Z"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 4h4v4M4 20l16-16M20 16v4h-4M15 15l5 5M4 4l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5v-15ZM5 19.5A1.5 1.5 0 0 0 6.5 21H19" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z M14 3v5h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="top">
+  <div class="brand"><span class="logo">S</span><span>Soru Tekrar</span></div>
+  <nav id="tabs">
+    <button data-view="study" class="active"><svg><use href="#i-play"/></svg><span>Çalış</span></button>
+    <button data-view="import"><svg><use href="#i-plus"/></svg><span>PDF Ekle</span></button>
+    <button data-view="list"><svg><use href="#i-grid"/></svg><span>Sorular</span></button>
+    <button data-view="stats"><svg><use href="#i-chart"/></svg><span>Analiz</span></button>
+    <button data-view="backup"><svg><use href="#i-cloud"/></svg><span>Yedek</span></button>
+  </nav>
+</header>
+
+<main>
+  <!-- ÇALIŞ -->
+  <section id="view-study" class="view active">
+    <div id="study-setup">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Tekrar oturumu</p>
+          <h1>Bugün neyi tekrar edelim?</h1>
+          <p id="st-count" class="muted"></p>
+        </div>
+        <button id="st-start" class="btn primary xl"><svg><use href="#i-play"/></svg>Başla</button>
+      </div>
+      <div class="panel">
+        <div class="grid-2">
+          <label class="field">Ders <select id="st-ders"></select></label>
+          <label class="field">Konu <select id="st-konu"></select></label>
+        </div>
+        <div class="modes" id="st-mode">
+          <label class="mode"><input type="radio" name="mode" value="due" checked><span class="mi c-blue"><svg><use href="#i-repeat"/></svg></span><b>Sırası gelenler</b><small>Tekrar zamanı gelen sorular</small></label>
+          <label class="mode"><input type="radio" name="mode" value="weak"><span class="mi c-red"><svg><use href="#i-flame"/></svg></span><b>En çok yanlış yaptıklarım</b><small>Hata sayısına göre sıralı</small></label>
+          <label class="mode"><input type="radio" name="mode" value="star"><span class="mi c-amber"><svg><use href="#i-star"/></svg></span><b>Yıldızlılar</b><small>İşaretlediğin önemli sorular</small></label>
+          <label class="mode"><input type="radio" name="mode" value="all"><span class="mi c-green"><svg><use href="#i-shuffle"/></svg></span><b>Hepsi karışık</b><small>Seçili filtredeki tüm sorular</small></label>
+        </div>
+        <div class="seg-row">
+          <span class="muted">Soru sayısı</span>
+          <select id="st-limit" class="compact"><option>10</option><option selected>20</option><option>40</option><option value="0">Hepsi</option></select>
+        </div>
+      </div>
+    </div>
+
+    <div id="study-run" class="hidden">
+      <div class="runbar">
+        <div class="runinfo">
+          <span id="run-meta" class="muted small"></span>
+          <div class="progress"><i id="run-bar"></i></div>
+        </div>
+        <span id="run-progress" class="pill"></span>
+        <span id="run-timer" class="pill timer"><svg><use href="#i-clock"/></svg><b>00:00</b></span>
+        <button id="run-stop" class="btn ghost">Bitir</button>
+      </div>
+      <div class="qimg-wrap"><img id="run-img" alt="soru"></div>
+      <div id="run-choices" class="choices"></div>
+      <div id="run-feedback" class="feedback hidden"></div>
+      <div class="run-actions">
+        <button id="run-skip" class="btn ghost">Atla</button>
+        <button id="run-next" class="btn primary lg hidden">Sonraki →</button>
+      </div>
+    </div>
+
+    <div id="study-done" class="panel hidden"></div>
+  </section>
+
+  <!-- PDF EKLE -->
+  <section id="view-import" class="view">
+    <div class="page-head"><p class="eyebrow">Soru ekle</p><h1>PDF'ten soru çıkar</h1></div>
+    <div class="panel">
+      <div class="step"><span class="num">1</span><div><h2>Kitaplarım</h2><p class="muted">Kitabın temiz (işaretsiz) PDF'ini bir kez ekle. Sorular bu temiz sayfalardan kesilir, konu adları sayfa başlıklarından okunur.</p></div></div>
+      <div id="bk-list"></div>
+      <details id="bk-add-box" class="add-box">
+        <summary><svg><use href="#i-plus"/></svg>Kitap ekle</summary>
+        <div class="grid-3">
+          <label class="field">Ders <input id="ba-ders" list="dl-ders" placeholder="TYT Matematik"></label>
+          <label class="field">Kitap / kaynak adı <input id="ba-name" list="dl-kaynak" placeholder="Eyüp B. Soru Bankası"></label>
+          <label class="field">Temiz kitap PDF'i <span class="file"><input id="ba-file" type="file" accept="application/pdf"><span class="fbtn"><svg><use href="#i-book"/></svg>Dosya seç</span><span class="fname">Seçilmedi</span></span></label>
+        </div>
+        <div class="actions"><button id="ba-run" class="btn primary">Kitabı tara ve ekle</button><span id="ba-status" class="muted small"></span></div>
+      </details>
+    </div>
+
+    <div class="panel">
+      <div class="step"><span class="num">2</span><div><h2>Çözdüğün bölümü ekle</h2><p class="muted">GoodNotes'tan çözdüğün sayfaları <b>notlarla birlikte</b> PDF olarak dışa aktar (sayfa sırası önemli değil). Pembe çerçeveli sorular <b>yanlış</b>, kırmızı yıldızlılar <b>yıldızlı</b> olarak alınır; cevaplar sayfa altındaki anahtardan okunur.</p></div></div>
+      <div class="grid-2">
+        <label class="field">Kitap <select id="im-book"></select></label>
+        <label class="field">İşaretli PDF <span class="file"><input id="im-file" type="file" accept="application/pdf"><span class="fbtn"><svg><use href="#i-file"/></svg>Dosya seç</span><span class="fname">Seçilmedi</span></span></label>
+        <label id="im-bookfile-wrap" class="field hidden">Kitap PDF'i <small>bu cihazda kayıtlı değil, seç</small><span class="file"><input id="im-bookfile" type="file" accept="application/pdf"><span class="fbtn"><svg><use href="#i-book"/></svg>Dosya seç</span><span class="fname">Seçilmedi</span></span></label>
+      </div>
+      <div id="im-nobook" class="grid-3 hidden">
+        <label class="field">Ders <input id="im-ders" list="dl-ders" placeholder="TYT Matematik"></label>
+        <label class="field">Kaynak <input id="im-kaynak" list="dl-kaynak" placeholder="Eyüp B."></label>
+        <label class="field">Konu <small>başlıktan okunamazsa</small><input id="im-konu" list="dl-konu" placeholder="Temel Kavramlar"></label>
+      </div>
+      <div class="actions"><button id="im-run" class="btn primary lg">Tara</button><span id="im-status" class="muted small"></span></div>
+    </div>
+
+    <div id="im-review" class="hidden">
+      <div class="panel sticky review-bar">
+        <div id="im-summary"></div>
+        <div class="actions">
+          <label class="check"><input type="checkbox" id="im-showall"><span>İşaretsizleri de göster</span></label>
+          <button id="im-save" class="btn primary">Kaydet</button>
+        </div>
+      </div>
+      <div id="im-cards" class="cards"></div>
+    </div>
+    <datalist id="dl-ders"><option>TYT Matematik</option><option>TYT Fizik</option><option>TYT Kimya</option><option>TYT Biyoloji</option><option>AYT Matematik</option></datalist>
+    <datalist id="dl-kaynak"></datalist>
+    <datalist id="dl-konu"></datalist>
+  </section>
+
+  <!-- SORULAR -->
+  <section id="view-list" class="view">
+    <div class="page-head"><p class="eyebrow">Arşiv</p><h1>Sorularım <span id="ls-count" class="count"></span></h1></div>
+    <div class="panel filters">
+      <label class="field">Ders <select id="ls-ders"></select></label>
+      <label class="field">Konu <select id="ls-konu"></select></label>
+      <label class="field">Göster <select id="ls-filter">
+        <option value="all">Hepsi</option><option value="wrong">Yanlışlar</option><option value="star">Yıldızlılar</option>
+        <option value="due">Sırası gelenler</option><option value="learned">Öğrenilenler</option><option value="noans">Cevabı eksik</option>
+      </select></label>
+    </div>
+    <div id="ls-cards" class="cards"></div>
+  </section>
+
+  <!-- ANALİZ -->
+  <section id="view-stats" class="view">
+    <div class="page-head row-between"><div><p class="eyebrow">İlerleme</p><h1>Analiz</h1></div><label class="field inline-field">Ders <select id="sa-ders"></select></label></div>
+    <div id="sa-tiles" class="tiles"></div>
+    <div class="panel">
+      <h2>Konu konu durum</h2>
+      <p class="muted">En çok zorlandığın konular üstte. Hata oranı, tekrar denemelerindeki yanlış payıdır.</p>
+      <div class="table-wrap" id="sa-topics"></div>
+    </div>
+    <div class="panel">
+      <h2>En çok yanlış yaptığın sorular</h2>
+      <div id="sa-worst" class="cards small"></div>
+    </div>
+  </section>
+
+  <!-- YEDEK -->
+  <section id="view-backup" class="view">
+    <div class="page-head"><p class="eyebrow">Veriler</p><h1>Yedek ve cihaz değiştirme</h1></div>
+    <div class="panel">
+      <p class="muted">Veriler bu cihazın tarayıcısında saklanır. Bilgisayar ile iPad arasında taşımak ya da yedeklemek için dışa aktar, diğer cihazda içe aktar. Kitap PDF'leri yedeğe girmez; diğer cihazda bir kez seçmen istenir.</p>
+      <div class="actions">
+        <button id="bk-export" class="btn primary">Dışa aktar (.json)</button>
+        <label class="btn soft">İçe aktar<input id="bk-import" type="file" accept=".json,application/json" hidden></label>
+      </div>
+      <p id="bk-status" class="muted small"></p>
+      <p id="bk-usage" class="muted small"></p>
+    </div>
+    <div class="panel danger-zone">
+      <h2>Tehlikeli bölge</h2>
+      <p class="muted">Tüm sorular, çözüm geçmişi ve kitaplar bu cihazdan silinir.</p>
+      <button id="bk-wipe" class="btn danger">Tüm verileri sil</button>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden"><div class="modal-box" id="modal-box"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
