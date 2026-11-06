@@ -9,14 +9,21 @@
      çözünürlüğünde kalır, büyüme eski çizgileri yeniden çizmez.
    - Sadece kalem (bilgisayarda fare) çizer; parmak sayfayı kaydırır. Çizimler kaydedilmez. */
 (function (global) {
-  const INK = '#1b1f2e';
-  const SIZES = { 1: 2.4, 2: 3.6, 3: 5.4 };            // çizgi çapı (CSS px), basınçla incelir/kalınlaşır
+  // Görünüm (GoodNotes'a yakın): sıcak siyah mürekkep, daha dolgun çizgi, yumuşak kenar,
+  // basınç değişimi daha uzun mesafeye yayılır, bitmiş çizginin ucu hafifçe incelir.
+  const INK = '#23221f';
+  const SIZES = { 1: 2.8, 2: 4.2, 3: 6.0 };            // çizgi çapı (CSS px), basınçla incelir/kalınlaşır
+  const PEN = { thinning: 0.30, smoothing: 0.65, streamline: 0.36 };
+  const PRESSURE_TAU = 14;                             // basınç yumuşatma zaman sabiti (ms): örnek sıklığından bağımsız
+  const ERASER_R = 12;                                 // silgi yarıçapı (CSS px)
   const TILE = 1024;                                    // karo yüksekliği (CSS px)
   const GROW_AT = 160, GROW_BY = 480, MAX_H = 4500;     // alt kenara yaklaşınca büyü; en fazla ~4 ekran (iPad belleği için sınırlı)
   const PF = () => global.PerfectFreehand;
 
   let sheet, hit, tilesEl, live, lctx, space, img;
   let strokes = [], cur = null, size = 2, W = 0, H = 0, dpr = 1, tiles = [], liveTop = 0, raf = 0, predicted = null;
+  let tool = 'pen', erasing = null;   // silgi: dokunduğu çizginin tamamını siler
+  let history = [];                   // geri al için işlemler: {t:'add', s} | {t:'erase', items:[{s,i}]} | {t:'clear', all}
 
   function init() {
     sheet = document.getElementById('sheet'); hit = document.getElementById('pad-hit'); tilesEl = document.getElementById('pad-tiles');
@@ -36,8 +43,14 @@
     window.addEventListener('resize', () => resize());
     if ('ResizeObserver' in window) new ResizeObserver(() => { if (sheet.clientWidth && (sheet.clientWidth !== W || sheet.clientHeight !== H)) resize(); }).observe(sheet);
 
-    document.getElementById('pad-undo').addEventListener('click', () => { const s = strokes.pop(); if (s) repaint(s.box); });
-    document.getElementById('pad-clear').addEventListener('click', () => { strokes = []; clearTiles(); });
+    document.getElementById('pad-undo').addEventListener('click', undo);
+    document.getElementById('pad-clear').addEventListener('click', () => { if (!strokes.length) return; history.push({ t: 'clear', all: strokes }); strokes = []; clearTiles(); });
+    document.getElementById('pad-tool').addEventListener('click', e => {
+      const b = e.target.closest('[data-tool]'); if (!b) return;
+      up(); tool = b.dataset.tool;
+      document.querySelectorAll('#pad-tool button').forEach(x => x.classList.toggle('on', x === b));
+      sheet.classList.toggle('erasing', tool === 'eraser');
+    });
     // kesintiler: kalem yakalaması kaybolursa, uygulamadan çıkılırsa ya da pencere odağı giderse çizgiyi bitir
     hit.addEventListener('lostpointercapture', up);
     document.addEventListener('visibilitychange', () => { if (document.hidden) up(); });
@@ -53,14 +66,16 @@
 
   // ---------- giriş ----------
   const drawable = (e) => e.pointerType === 'pen' || e.pointerType === 'mouse';
-  let rect = null, lastP = 0.5;
+  let rect = null, lastP = 0.5, lastT = 0;
   // noktalar sayfa genişliğine oranla tutulur: ekran döndürülünce çizim resimle hizalı kalır
   function sample(e) {
     let p = 0.5;
     if (e.pointerType === 'pen') {
-      // Apple Pencil basıncı gürültülü: hafif yumuşatma (gecikme yaratmayacak kadar)
+      // Apple Pencil basıncı gürültülü: zaman tabanlı yumuşatma (örnek sıklığı değişse de aynı davranır)
       const raw = e.pressure > 0 ? e.pressure : lastP;
-      p = lastP = lastP * 0.55 + raw * 0.45;
+      const dt = Math.max(0, Math.min(50, (e.timeStamp || 0) - lastT)); lastT = e.timeStamp || 0;
+      const a = 1 - Math.exp(-dt / PRESSURE_TAU);
+      p = lastP = lastP + (raw - lastP) * a;
     }
     return [(e.clientX - rect.left) / W, (e.clientY - rect.top) / W, p];
   }
@@ -69,12 +84,19 @@
     e.preventDefault();
     try { hit.setPointerCapture(e.pointerId); } catch (err) { /* desteklenmezse de çizer */ }
     rect = sheet.getBoundingClientRect();
-    lastP = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5;
+    if (tool === 'eraser') { erasing = { id: e.pointerId, items: [] }; placeLive(); eraseAt(e); return; }
+    lastP = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5; lastT = e.timeStamp || 0;
     cur = { id: e.pointerId, s: size, pen: e.pointerType === 'pen', pts: [sample(e)] };
     placeLive();
     schedule();
   }
   function move(e) {
+    if (erasing && e.pointerId === erasing.id) {
+      e.preventDefault();
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+      for (const ce of (evs && evs.length ? evs : [e])) eraseAt(ce);
+      return;
+    }
     if (!cur || e.pointerId !== cur.id) return;
     e.preventDefault();
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
@@ -86,6 +108,11 @@
     schedule();
   }
   function up(e) {
+    if (erasing && (!e || e.pointerId === erasing.id)) {
+      if (erasing.items.length) history.push({ t: 'erase', items: erasing.items });
+      erasing = null; lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.clearRect(0, 0, live.width, live.height);
+      return;
+    }
     if (!cur || (e && e.pointerId !== cur.id)) return;
     if (e && e.type === 'pointerup' && drawable(e)) cur.pts.push(sample(e)); // kaldırma anındaki son nokta
     const st = cur; cur = null; predicted = null;
@@ -97,10 +124,13 @@
   // ---------- çizgi geometrisi ----------
   function outlineOf(pts, s, pen, last) {
     const px = pts.map(p => [p[0] * W, p[1] * W, p[2]]);
+    // bitmiş ve yeterince uzun çizgide uç hafifçe incelir (kısa işaretler — nokta, "1" — bozulmasın diye uzunluğa bağlı)
+    let len = 0; for (let i = 1; i < px.length; i++) len += Math.hypot(px[i][0] - px[i - 1][0], px[i][1] - px[i - 1][1]);
+    const endTaper = last && len > 24 ? Math.min(6, len * 0.12) : 0;
     return PF().getStroke(px, {
-      size: SIZES[s], thinning: pen ? 0.45 : 0, smoothing: 0.55, streamline: 0.32,
-      simulatePressure: !pen, easing: (t) => t, last,
-      start: { cap: true, taper: 0 }, end: { cap: true, taper: 0 }
+      size: SIZES[s], thinning: pen ? PEN.thinning : 0, smoothing: PEN.smoothing, streamline: PEN.streamline,
+      simulatePressure: !pen, easing: (t) => Math.sin((t * Math.PI) / 2), last,
+      start: { cap: true, taper: 0 }, end: { cap: true, taper: endTaper }
     });
   }
   // dış hattı yumuşak (quadratic) kapalı bir şekle çevir: her köşe kontrol noktası, geçişler orta noktalardan
@@ -119,9 +149,9 @@
     return p;
   }
   function bboxOf(o) {
-    let y0 = Infinity, y1 = -Infinity;
-    for (const q of o) { if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; }
-    return { y0, y1 };
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const q of o) { if (q[0] < x0) x0 = q[0]; if (q[0] > x1) x1 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[1] > y1) y1 = q[1]; }
+    return { x0, x1, y0, y1 };
   }
 
   // ---------- canlı katman ----------
@@ -171,7 +201,48 @@
       t.ctx.fillStyle = INK; t.ctx.fill(pathOf(st.o));
     }
   }
-  function commit(st) { strokes.push(st); drawStroke(st, false); }
+  function commit(st) { strokes.push(st); history.push({ t: 'add', s: st }); drawStroke(st, false); }
+
+  // ---------- silgi ----------
+  // kalem ucunun ERASER_R yarıçapındaki çizgiler (tamamı) silinir; canlı katmanda silgi halkası gösterilir
+  function eraseAt(e) {
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.clearRect(0, 0, live.width / dpr, live.height / dpr);
+    lctx.strokeStyle = 'rgba(80,80,90,.55)'; lctx.lineWidth = 1.5;
+    lctx.beginPath(); lctx.arc(x, y - liveTop, ERASER_R, 0, Math.PI * 2); lctx.stroke();
+    let changed = null;
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      const st = strokes[i], r = ERASER_R + SIZES[st.s] / 2;
+      if (!st.box || y < st.box.y0 - r || y > st.box.y1 + r || x < st.box.x0 - r || x > st.box.x1 + r) continue;
+      if (hitsStroke(st.pts, x, y, r)) {
+        strokes.splice(i, 1); erasing.items.push({ s: st, i });
+        changed = changed ? { y0: Math.min(changed.y0, st.box.y0), y1: Math.max(changed.y1, st.box.y1) } : { y0: st.box.y0, y1: st.box.y1 };
+      }
+    }
+    if (changed) repaint(changed);
+  }
+  // silgi noktası çizgiye yeterince yakın mı: noktalar arasındaki doğru parçalarına uzaklık (seyrek örneklenmiş
+  // hızlı çizgilerde iki nokta arası boşluğa dokunulduğunda da silinsin)
+  function hitsStroke(pts, x, y, r) {
+    const r2 = r * r;
+    if (pts.length === 1) { const dx = pts[0][0] * W - x, dy = pts[0][1] * W - y; return dx * dx + dy * dy <= r2; }
+    for (let i = 1; i < pts.length; i++) {
+      const ax = pts[i - 1][0] * W, ay = pts[i - 1][1] * W, bx = pts[i][0] * W, by = pts[i][1] * W;
+      const vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy;
+      const t = L ? Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / L)) : 0;
+      const dx = ax + vx * t - x, dy = ay + vy * t - y;
+      if (dx * dx + dy * dy <= r2) return true;
+    }
+    return false;
+  }
+  // geri al: son işlemi tersine çevir (çizgi ekleme, silgi ya da temizle)
+  function undo() {
+    up();
+    const a = history.pop(); if (!a) return;
+    if (a.t === 'add') { const i = strokes.lastIndexOf(a.s); if (i >= 0) strokes.splice(i, 1); repaint(a.s.box); }
+    else if (a.t === 'erase') { for (const it of a.items.slice().reverse()) strokes.splice(Math.min(it.i, strokes.length), 0, it.s); a.items.forEach(it => repaint(it.s.box)); }
+    else if (a.t === 'clear') { strokes = a.all.slice(); repaint(null); }
+  }
   function clearTiles() { tiles.forEach(t => { t.ctx.setTransform(1, 0, 0, 1, 0, 0); t.ctx.clearRect(0, 0, t.c.width, t.c.height); }); }
   // bir bölgeyi (geri alma sonrası) sadece etkilenen karolarda yeniden çiz
   function repaint(box) {
@@ -207,7 +278,7 @@
   }
   // yeni soru: çizimi sil, boş alanı ilk boyuna getir
   function reset() {
-    strokes = []; cur = null; predicted = null;
+    strokes = []; history = []; cur = null; erasing = null; predicted = null;
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     space.style.height = '';
     clearTiles();

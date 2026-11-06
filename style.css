@@ -375,3 +375,8 @@ button.chip.konu { max-width: 100%; overflow: hidden; text-overflow: ellipsis; w
 .dock .feedback { margin: 10px 0 0; } .dock .grade { margin: 10px 0 0; }
 .dock .run-actions:has(#run-next:not(.hidden)), .dock .run-actions:has(#run-skip:not(.hidden)) { margin-top: 10px; }
 .update-banner { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(24px + var(--tabbar-h) + env(safe-area-inset-bottom)); z-index: 65; display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 18px; border-radius: 14px; background: var(--ink); color: var(--bg); font-weight: 600; font-size: 14px; box-shadow: var(--shadow-lg); }
+
+.seg.tool button { width: 44px; color: var(--muted); }
+.seg.tool button svg { width: 19px; height: 19px; fill: none; }
+.seg.tool button.on { color: var(--accent-text); }
+.sheet.erasing #pad-hit { cursor: cell; }
