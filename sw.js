@@ -1,6 +1,6 @@
 /* Çevrimdışı çalışma: önce ağ (her zaman güncel), ağ yoksa önbellek. */
-const CACHE = 'soru-tekrar-v1';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'db.js', 'detect.js', 'manifest.webmanifest',
+const CACHE = 'soru-tekrar-v3';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'db.js', 'catalog.js', 'zip.js', 'detect.js', 'manifest.webmanifest',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'fonts/inter-latin.woff2', 'fonts/inter-latin-ext.woff2',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 

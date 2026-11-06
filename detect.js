@@ -152,11 +152,15 @@
       if (!m) continue;
       const n = +m[1];
       if (n < 1 || n > 200) continue;
-      cands.push({ n, x: it.x, y: it.y, h: it.h, bold: it.bold, col: it.x < W / 2 ? 0 : 1 });
+      cands.push({ n, x: it.x, y: it.y, h: it.h, bold: it.bold });
     }
-    // satırının en solundaki olmalı (kolon içinde)
+    // sütunlar: numaraların x konumlarını kümele (tek, iki ya da üç sütunlu düzenler)
+    const cols = columnsFrom((cands.some(c => c.bold) ? cands.filter(c => c.bold) : cands).map(c => c.x), W);
+    const colOf = (x) => { for (let i = cols.length - 1; i >= 0; i--) if (x >= cols[i].x0) return i; return 0; };
+    cands.forEach(c => { c.col = colOf(c.x); });
+    // satırının en solundaki olmalı (kendi sütunu içinde)
     const leftmost = cands.filter(c => !body.some(o => o !== c && Math.abs(o.y - c.y) < c.h * 0.6 &&
-      (o.x < W / 2 ? 0 : 1) === c.col && o.x < c.x - 4 && o.s.trim().length > 0));
+      colOf(o.x) === c.col && o.x < c.x - 4 && o.s.trim().length > 0));
     let pool = leftmost.length ? leftmost : cands;
     if (pool.some(c => c.bold)) pool = pool.filter(c => c.bold);
     const keyNums = Object.keys(key).map(Number);
@@ -167,15 +171,31 @@
     // her numaradan bir tane (en soldaki)
     const byN = new Map();
     for (const c of pool) { const p = byN.get(c.n); if (!p || c.x < p.x) byN.set(c.n, c); }
-    return [...byN.values()].sort((a, b) => a.col - b.col || a.y - b.y);
+    const nums = [...byN.values()].sort((a, b) => a.col - b.col || a.y - b.y);
+    nums.cols = cols;
+    return nums;
+  }
+  // x konumlarından sütun sınırları: aralarında sayfa genişliğinin %20'sinden fazla boşluk olan gruplar
+  function columnsFrom(xs, W) {
+    const s = [...xs].sort((a, b) => a - b);
+    const starts = [];
+    for (const x of s) if (!starts.length || x - starts[starts.length - 1].last > W * 0.2) starts.push({ first: x, last: x }); else starts[starts.length - 1].last = x;
+    if (!starts.length) return [{ x0: 0, x1: W }];
+    return starts.map((g, i) => ({ x0: i === 0 ? 0 : g.first - W * 0.06, x1: i < starts.length - 1 ? starts[i + 1].first - W * 0.06 : W, numX: g.first }));
   }
 
   // Renk sınıfları
-  function isPink(r, g, b) {   // pembe fosfor; sarı fosforun üstündeyse turuncumsu görünür
-    if (r < 225) return false;
-    if (g >= 140 && g <= 200 && b >= 150 && b <= 210 && r - g > 35) return true; // beyaz üstünde pembe
+  function isPink(r, g, b) {   // pembe/kırmızımsı pastel fosfor; sarı fosforun üstündeyse turuncumsu görünür
+    if (r < 215) return false;
     if (g >= 165 && g <= 190 && b >= 88 && b <= 125) return true;                  // sarı + pembe
-    return false;
+    // ton (hue) kırmızı-pembe aralığında, doygun ama açık renk
+    const mx = r, mn = Math.min(g, b);
+    if (mn < 115) return false;                           // kırmızı kalem (G,B düşük) fosfor değildir
+    if (mx - mn < 40) return false;                       // gri/beyaz değil
+    const l = (mx + mn) / 510;                            // açıklık
+    if (l < 0.55 || l > 0.93) return false;               // koyu kırmızı kalem değil, çok soluk değil
+    const hue = g >= b ? 60 * (g - b) / (mx - mn) : 360 - 60 * (b - g) / (mx - mn); // 0=kırmızı, 330=pembe
+    return hue <= 18 || hue >= 320;
   }
   function isRedInk(r, g, b) { // kırmızı kalem
     return r > 170 && g < 110 && b < 110 && r - g > 90;
@@ -183,17 +203,18 @@
 
   // Yatay pembe şeritler (çerçevenin üst/alt kenarları) → satır bazında, kolona orta noktasına göre atanır.
   // Kırmızı kalem pikselleri → 8px hücrelerde kümelenip bloblara ayrılır.
-  function scanColors(canvas, mid) {
+  function scanColors(canvas, cols) {
     const W = canvas.width, H = canvas.height;
     const data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
     const minRun = W * 0.05, gap = 14;
-    const pinkRows = [new Uint8Array(H), new Uint8Array(H)];
+    const pinkRows = cols.map(() => new Uint8Array(H));
+    const colOf = (x) => { for (let i = cols.length - 1; i >= 0; i--) if (x >= cols[i].x0) return i; return 0; };
     const CS = 8, gw = Math.ceil(W / CS), gh = Math.ceil(H / CS);
     const redGrid = new Uint16Array(gw * gh);
     for (let y = 0; y < H; y++) {
       let o = y * W * 4, runStart = -1, lastPink = -100;
       const closeRun = (end) => {
-        if (runStart >= 0 && end - runStart >= minRun) pinkRows[(runStart + end) / 2 < mid ? 0 : 1][y] = 1;
+        if (runStart >= 0 && end - runStart >= minRun) pinkRows[colOf((runStart + end) / 2)][y] = 1;
         runStart = -1;
       };
       for (let x = 0; x < W; x++, o += 4) {
@@ -236,12 +257,15 @@
     const test = hd.test;
     const printed = parsePrinted(items, W, H);
     const nums = findQuestionNumbers(items, W, H, key, footerTop);
-    const mid = W / 2;
-    const { pinkRows, blobs } = scanColors(canvas, mid);
+    const cols = nums.cols;
+    const { pinkRows, blobs } = scanColors(canvas, cols);
     const bandRows = Math.max(4, Math.round(H * 0.003)); // fosfor şeridi en az bu kadar satır
     const questions = [];
-    for (const col of [0, 1]) {
+    cols.forEach((C, col) => {
       const qs = nums.filter(q => q.col === col);
+      // kırpma: numaranın biraz solundan, bir sonraki sütunun numarasına kadar
+      const x0 = Math.max(0, C.numX - W * 0.035);
+      const x1 = cols[col + 1] ? cols[col + 1].numX - W * 0.02 : W * 0.97;
       qs.forEach((q, i) => {
         const prevY = i > 0 ? qs[i - 1].y : H * 0.08;
         const nextY = i < qs.length - 1 ? qs[i + 1].y : footerTop;
@@ -249,30 +273,38 @@
         const below = sumRange(pinkRows[col], q.y - q.h * 0.3, nextY - q.h * 0.5);
         const top = Math.max(0, q.y - q.h - H * 0.012);
         const bottom = i < qs.length - 1 ? qs[i + 1].y - qs[i + 1].h - H * 0.012 : footerTop;
+        const wrong = above >= bandRows && below >= bandRows;
         questions.push({
           n: q.n, col, y: q.y, x: q.x,
-          box: { x: col === 0 ? W * 0.05 : mid - W * 0.01, y: top, w: col === 0 ? mid - W * 0.04 : W * 0.46, h: bottom - top },
+          box: { x: x0, y: top, w: x1 - x0, h: bottom - top },
           answer: key[q.n] || null,
-          wrong: above >= bandRows && below >= bandRows,
-          star: false,
+          wrong, star: false,
+          // zayıf iz: iki tarafta da biraz pembe var ama şerit kadar değil → "kontrol et"
+          suggest: !wrong && above >= 2 && below >= 2,
           debug: { above, below, bandRows }
         });
       });
-    }
-    // Kırmızı kalem blobları → en yakın soru köşesine (sol üst: numara, sağ üst: kolon kenarı)
+    });
+    // Kırmızı kalem blobları → en yakın soru köşesine (sol üst: numara, sağ üst: sütun kenarı)
     const minPx = W * H * 0.00002;
     for (const b of blobs) {
       if (b.px < minPx || Math.max(b.w, b.h) < W * 0.012) continue;
       let best = null, bestD = Infinity;
       for (const q of questions) {
         if (b.y < q.y - H * 0.07 || b.y > q.y + H * 0.035) continue;
-        const rightX = q.col === 0 ? mid - W * 0.02 : W * 0.95;
+        const rightX = cols[q.col].x1 - W * 0.02;
         const d = Math.min(Math.hypot(b.x - q.x, (b.y - q.y) * 1.5), Math.hypot(b.x - rightX, (b.y - q.y) * 1.5));
         if (d < bestD) { bestD = d; best = q; }
       }
-      if (best && bestD < W * 0.12) { best.star = true; (best.debug.stars = best.debug.stars || []).push([Math.round(b.x), Math.round(b.y), b.px]); }
+      if (!best) continue;
+      if (bestD < W * 0.12) { best.star = true; (best.debug.stars = best.debug.stars || []).push([Math.round(b.x), Math.round(b.y), b.px]); }
+      else if (bestD < W * 0.2) best.suggest = true;
     }
-    return { pageNo, test, konu: hd.konu, seviye: hd.seviye, printed, key, keyStr: keyString(key), canvas, questions };
+    questions.forEach(q => { if (q.star || q.wrong) q.suggest = false; });
+    // sayfada belirgin pembe işaret var ama hiçbir soruya bağlanamadıysa uyar
+    const pinkTotal = pinkRows.reduce((s, a) => s + sumRange(a, H * 0.08, footerTop), 0);
+    const pageWarn = pinkTotal >= bandRows * 2 && !questions.some(q => q.wrong);
+    return { pageNo, test, konu: hd.konu, seviye: hd.seviye, printed, key, keyStr: keyString(key), canvas, questions, pageWarn, noNumbers: !nums.length };
   }
 
   // İşaretli sayfa için kitaptaki karşılığını bul. Puan: cevap anahtarı + basılı sayfa no + test + konu.
