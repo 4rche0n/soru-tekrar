@@ -1205,7 +1205,10 @@
   // dokunmazsa uygulama bir sonraki açılışta yeni sürümle başlar. Çalışma ortasında kendiliğinden yenilenmez.
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     let applying = false; // sayfa SADECE bilerek uygulanan güncellemede yenilenir (ilk kurulumda değil)
-    const busy = () => S.phase !== 'idle' || !!IM || !$('#modal').classList.contains('hidden') || !$('#viewer').classList.contains('hidden');
+    // meşgul: çalışma oturumu, içe aktarma incelemesi, açık pencere ya da süren tarama/kitap okuma/kaydetme (düğmesi kilitli)
+    const busy = () => S.phase !== 'idle' || !!IM || !$('#modal').classList.contains('hidden') || !$('#viewer').classList.contains('hidden') ||
+      $('#im-run').disabled || $('#ba-run').disabled || $('#im-save').disabled && !$('#im-review').classList.contains('hidden');
+    let autoApplyUntil = 0; // uygulamaya dönüşte başlayan kontrol kısa süre içinde yeni sürüm bulursa, boştaysa hemen uygula
     const apply = (w) => { if (!w || applying) return; applying = true; w.postMessage('skipWaiting'); };
     const offer = (w) => {
       if (!w || !navigator.serviceWorker.controller) return; // ilk kurulumda bildirim gerekmez
@@ -1217,14 +1220,18 @@
       if (reg.waiting) offer(reg.waiting);
       reg.addEventListener('updatefound', () => {
         const w = reg.installing;
-        w && w.addEventListener('statechange', () => { if (w.state === 'installed') offer(w); });
+        w && w.addEventListener('statechange', () => {
+          if (w.state !== 'installed') return;
+          if (Date.now() < autoApplyUntil && !document.hidden && !busy() && navigator.serviceWorker.controller) apply(w);
+          else offer(w);
+        });
       });
       // iPad'de uygulamaya geri dönmek "yeniden açılış" sayılmaz: dönüşte yeni sürüm var mı bak;
       // yarım iş yoksa (oturum, tarama, açık pencere) hazır güncellemeyi kendiliğinden uygula
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) return;
         if (reg.waiting && !busy()) apply(reg.waiting);
-        else reg.update().catch(() => {});
+        else { autoApplyUntil = Date.now() + 2 * 60 * 1000; reg.update().catch(() => {}); }
       });
       setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
     }).catch(() => {});

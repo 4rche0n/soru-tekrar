@@ -4,7 +4,7 @@
    - Yeni sürüm arka planda TAMAMEN ve taze (?v=SÜRÜM) indirilir; bir dosya bile eksikse kurulum iptal olur, eski sürüm sürer.
    - Yeni sürüm bekler; kullanıcı "Güncelle"ye dokunduğunda ya da uygulamaya yarım iş yokken geri döndüğünde devreye girer.
    VERSION, surum-guncelle.ps1 ile dosyaların içeriğinden otomatik üretilir; elle değiştirme. */
-const VERSION = 'e637a75603a0';
+const VERSION = '238add7cc5db';
 // önbellek adı kurulumun adresini (scope) de içerir: aynı sitedeki başka bir kurulumun önbelleğine dokunulmaz
 const PREFIX = 'soru-tekrar:' + self.registration.scope + ':';
 const CACHE = PREFIX + VERSION;
