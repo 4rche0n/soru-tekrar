@@ -20,6 +20,7 @@
 <script src="zip.js"></script>
 <script src="db.js"></script>
 <script src="detect.js"></script>
+<script src="pad.js"></script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -94,13 +95,30 @@
         <span id="run-timer" class="pill timer"><svg><use href="#i-clock"/></svg><b>00:00</b></span>
         <button id="run-stop" class="btn ghost">Bitir</button>
       </div>
-      <div class="qimg-wrap"><img id="run-img" alt="soru" title="Büyütmek için dokun"></div>
-      <div id="run-choices" class="choices"></div>
-      <div id="run-feedback" class="feedback hidden"></div>
-      <div id="run-grade" class="grade hidden"></div>
-      <div class="run-actions">
-        <button id="run-skip" class="btn ghost">Atla</button>
-        <button id="run-next" class="btn primary lg hidden">Devam →</button>
+      <div class="pad-tools">
+        <div class="seg" id="pad-size" title="Kalınlık">
+          <button data-s="1" aria-label="İnce"><i style="width:4px;height:4px"></i></button>
+          <button data-s="2" class="on" aria-label="Orta"><i style="width:7px;height:7px"></i></button>
+          <button data-s="3" aria-label="Kalın"><i style="width:11px;height:11px"></i></button>
+        </div>
+        <button id="pad-undo" class="btn soft sm">Geri al</button>
+        <button id="pad-clear" class="btn soft sm">Temizle</button>
+        <span class="pad-hint muted small">Kalemle yaz, parmakla kaydır</span>
+        <button id="pad-zoom" class="btn ghost sm">Büyüt</button>
+      </div>
+      <div class="sheet" id="sheet">
+        <img id="run-img" alt="soru" draggable="false">
+        <div class="pad-space" id="pad-space"></div>
+        <canvas id="pad"></canvas>
+      </div>
+      <div class="dock" id="run-dock">
+        <div id="run-choices" class="choices"></div>
+        <div id="run-feedback" class="feedback hidden"></div>
+        <div id="run-grade" class="grade hidden"></div>
+        <div class="run-actions">
+          <button id="run-skip" class="btn ghost">Atla</button>
+          <button id="run-next" class="btn primary lg hidden">Devam →</button>
+        </div>
       </div>
     </div>
 

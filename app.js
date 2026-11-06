@@ -296,7 +296,9 @@
   $('#run-stop').addEventListener('click', finishSession);
   $('#run-skip').addEventListener('click', () => { S.i++; next(); });
   $('#run-next').addEventListener('click', () => { if (S.phase === 'grade' && !S.ok) commit('wrong'); });
-  $('#run-img').addEventListener('click', () => openViewer($('#run-img').src));
+  // resme dokunmak artık kalemle yazmak için; büyütme ayrı düğmede
+  $('#pad-zoom').addEventListener('click', () => openViewer($('#run-img').src));
+  Pad.init();
   document.addEventListener('keydown', e => {
     if (!$('#view-study').classList.contains('active') || $('#study-run').classList.contains('hidden') || !$('#modal').classList.contains('hidden')) return;
     if (e.target.matches('input, select, textarea')) return;
@@ -316,6 +318,7 @@
     $('#run-progress').textContent = `${S.i + 1} / ${S.queue.length}`;
     $('#run-bar').style.width = `${Math.round(S.i / S.queue.length * 100)}%`;
     const img = $('#run-img'); img.removeAttribute('src'); img.src = await imgURL(q.id);
+    Pad.reset(); // her soruda temiz sayfa
     $('#run-feedback').className = 'feedback hidden'; $('#run-grade').className = 'grade hidden';
     $('#run-next').classList.add('hidden'); $('#run-skip').classList.remove('hidden');
     $('#run-choices').innerHTML = LETTERS.map(l => `<button data-l="${l}">${l}</button>`).join('');
